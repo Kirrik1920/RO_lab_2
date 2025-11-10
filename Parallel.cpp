@@ -4,11 +4,11 @@
 #include <math.h>
 #include <mpi.h>
 
-// ======= общие штуки =======
-int ProcNum = 0;      // сколько процессов
-int ProcRank = 0;     // мой ранг
 
-// простая инициализация: все единицы
+int ProcNum = 0;      
+int ProcRank = 0;     
+
+
 void DummyDataInitialization(double* A, double* B, int N) {
     for (int i = 0; i < N; ++i)
         for (int j = 0; j < N; ++j) {
@@ -17,7 +17,7 @@ void DummyDataInitialization(double* A, double* B, int N) {
         }
 }
 
-// печать матрицы (если нужно для отладки)
+
 void PrintMatrix(double* M, int R, int C) {
     for (int i = 0; i < R; ++i) {
         for (int j = 0; j < C; ++j) printf("%7.4f ", M[i*C + j]);
@@ -25,7 +25,7 @@ void PrintMatrix(double* M, int R, int C) {
     }
 }
 
-// обычное тройное умножение C += A*B (полные матрицы)
+
 void SerialMatMul(double* A, double* B, double* C, int N) {
     for (int i = 0; i < N; ++i)
         for (int k = 0; k < N; ++k) {
@@ -35,13 +35,11 @@ void SerialMatMul(double* A, double* B, double* C, int N) {
         }
 }
 
-// ======= Ветвь 1: квадратная сетка процессов (Fox как у тебя) =======
-/* Используем твою логику Fox/«шашечки» почти без изменений,
-   только обёрнуто в функции и аккуратно с проверками ввода. */
 
-static int GridSize;            // sqrt(ProcNum)
-static int GridCoords[2];       // координаты в сетке
-static MPI_Comm GridComm;       // декартов коммуникатор
+
+static int GridSize;            
+static int GridCoords[2];       
+static MPI_Comm GridComm;       
 static MPI_Comm RowComm, ColComm;
 
 void CreateGridCommunicators() {
@@ -116,11 +114,11 @@ void RunSquareGrid(int N) {
     MPI_Barrier(MPI_COMM_WORLD);
     double t0 = MPI_Wtime();
 
-    // раздать блоки
+    
     CheckerboardScatter(A, Ablk, N, BS);
     CheckerboardScatter(B, Bblk, N, BS);
 
-    // Fox
+    
     for (int it = 0; it < GridSize; ++it) {
         ABlockBcast(it, Abuf, Ablk, BS);
         BlockMulAdd(Abuf, Bblk, Cblk, BS);
@@ -128,14 +126,14 @@ void RunSquareGrid(int N) {
     }
 
 
-    // собрать результат
+    
     GatherCheckerboard(C, Cblk, N, BS);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double t1 = MPI_Wtime();
 
     if (ProcRank == 0) {
-        // проверка (по желанию — можно отключить)
+        
         int ok = 1;
         double* Cref = (double*)calloc(N*N, sizeof(double));
         SerialMatMul(A, B, Cref, N);
@@ -147,9 +145,9 @@ void RunSquareGrid(int N) {
     delete[] Ablk; delete[] Bblk; delete[] Cblk; delete[] Abuf;
 }
 
-// ======= Ветвь 2: НЕ квадрат процессов — строчно-разделённый вариант =======
+
 void RunRowStriped(int N) {
-    // ранг 0 создаёт полные A,B; всем нужна только B (рассылаем broadcast)
+    
     double *A = nullptr, *B = nullptr, *C = nullptr;
     if (ProcRank == 0) {
         A = new double[N*N];
@@ -157,10 +155,10 @@ void RunRowStriped(int N) {
         C = new double[N*N]();
         DummyDataInitialization(A, B, N);
     } else {
-        B = new double[N*N]; // на остальных храним копию B
+        B = new double[N*N]; 
     }
 
-    // раздать строки A: балансируем counts/displs
+    
     int base = N / ProcNum, rem = N % ProcNum;
     int my_rows = base + (ProcRank < rem ? 1 : 0);
 
@@ -172,8 +170,8 @@ void RunRowStriped(int N) {
         int off = 0;
         for (int r = 0; r < ProcNum; ++r) {
             int rows = base + (r < rem ? 1 : 0);
-            counts[r] = rows * N;      // элементов double
-            displs[r] = off * N;       // смещение в элементах
+            counts[r] = rows * N;      
+            displs[r] = off * N;       
             off += rows;
         }
     }
@@ -181,17 +179,17 @@ void RunRowStriped(int N) {
     double* A_local = new double[(size_t)my_rows * N];
     double* C_local = new double[(size_t)my_rows * N]();
 
-    // рассылаем строки A
+    
     MPI_Scatterv(A, counts, displs, MPI_DOUBLE,
                  A_local, my_rows * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    // рассылаем B всем
+   
     MPI_Bcast(B, N*N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     double t0 = MPI_Wtime();
 
-    // локальное умножение (мои строки A * полная B -> мои строки C)
+    
     for (int i = 0; i < my_rows; ++i)
         for (int k = 0; k < N; ++k) {
             double aik = A_local[i*N + k];
@@ -202,12 +200,12 @@ void RunRowStriped(int N) {
     MPI_Barrier(MPI_COMM_WORLD);
     double t1 = MPI_Wtime();
 
-    // собираем C
+   
     MPI_Gatherv(C_local, my_rows * N, MPI_DOUBLE,
                 C, counts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     if (ProcRank == 0) {
-        // проверка (по желанию — можно отключить)
+        
         int ok = 1;
         double* Cref = (double*)calloc(N*N, sizeof(double));
         SerialMatMul(A, B, Cref, N);
@@ -230,7 +228,7 @@ int main(int argc, char** argv) {
 
     if (ProcRank == 0) printf("Parallel matrix multiplication program\n");
 
-    // читаем N на корне с проверкой
+    
     int N = 0;
     if (ProcRank == 0) {
         printf("\nEnter the size of matrices: ");
@@ -240,11 +238,11 @@ int main(int argc, char** argv) {
     if (N <= 0) { MPI_Finalize(); return 0; }
 
 
-    // если квадрат процессов — запускаем Fox; иначе — строчный вариант
+    
     int g = (int)(sqrt((double)ProcNum) + 0.5);
     if (g * g == ProcNum) {
         GridSize = g;
-        // проверим делимость N на GridSize (чтобы блоки были целые)
+        
         if (N % GridSize != 0) {
             if (ProcRank == 0) printf("Size must be divisible by sqrt(np)=%d\n", GridSize);
             MPI_Finalize(); return 0;
@@ -252,7 +250,7 @@ int main(int argc, char** argv) {
         CreateGridCommunicators();
         RunSquareGrid(N);
     } else {
-        // работает на любом np (1,2,4,8,…), делимость не требуется
+        
         RunRowStriped(N);
     }
 
